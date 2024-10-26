@@ -161,12 +161,8 @@
 	pop hl  ; pop room being built
 	ld (hl), b  ; set coordinates
 	inc hl
-	push hl  ; rng clobbers h
-	call rng
-	pop hl
-	and %111
-	inc a  ; room id between 1 and 8
-	ldi (hl), a  ; set random id
+	ld a, 0
+	ldi (hl), a  ; set room id 0 for now
 	ld a, ROOM_TYPE_NORMAL
 	set ROOM_INFO_ALIVE_FLAG, a
 	ldi (hl), a  ; set room info
@@ -205,122 +201,120 @@
 ; //// add doors \\\\
 @add_doors:
 	; add the doors for each room
+	; here we are testing all (room 1, room 2) pairs
+	; we don't optimise the nested loops because
+	; it allows us to only check room 1 bottom and right
+	; (and therefore room 2 top and left) doors at
+	; each step, which saves a massive amount of
+	; complexity (e.g in term of register usage)
+
+	; start of loop on room 1
 	ld hl, current_floor_.rooms
 	ld a, (current_floor_.number_rooms)
-	ld d, a  ; d is room 1 counter
+	ld b, a  ; b is room 1 counter
 @@room_1_doors:
-	push de  ; push room 1 counter
 	push hl  ; push current room 1
-	ld b, (hl)  ; b is room 1 coordinates
+	ld d, (hl)  ; d is room 1 coordinates
+
+	;start of loop on room 2
+	ld hl, current_floor_.rooms
 	ld a, (current_floor_.number_rooms)
-	ld c, d  ; room 2 counter is room 1 counter
-	         ; because it will be decreased at loop start
-	         ; c is room 2 counter
+	ld c, a  ; c is room 2 counter
 @@room_2_doors:
-	dec c
-	jr z, @@contine_room_1_doors
-	ld de, _sizeof_room
-	add hl, de  ; next room in hl
-	ld e, 0  ; e will store some info later
-	ld a, (hl)
-	and ROOM_Y_MASK
-	ld d, a  ; d is room 2 y
-	ld a, b
-	and ROOM_Y_MASK  ; a is room 1 y
-	sub d  ; a is r1.y - r2.y
-	jr z, @@potential_x_neighboor
-	cp 1  ; check diff = 1
-	jr z, @@potential_y_neighboor_1_is_bot
-	add 1  ; check diff = -1
-	jr nc, @@room_2_doors
-; potential_y_neighboor_1_is_top:
-	ld e, 1
-	jr @@potential_x_neighboor
-@@potential_y_neighboor_1_is_bot:
-	ld e, 2
-@@potential_x_neighboor:
-	ld a, (hl)
+	ld a, (hl)  ; get room 2 coordinates
+	cp d  ; are 1 and 2 the same room ?
+	jr z, @@continue_room_2_doors
+
+	; process x coordinates
 	and ROOM_X_MASK
 	swap a
-	ld d, a  ; d is room 2 x
-	ld a, b
+	ld e, a  ; e is room 2 x
+	ld a, d
 	and ROOM_X_MASK
 	swap a  ; a is room 1 x
-	sub d  ; a is r1.x - r2.x
-	jr z, @@check_y_neighboor_1_is_top
-; check_x_neighboor_1_is_right:
-	cp 1  ; check if diff = 1
-	jr nz, @@check_x_neighboor_1_is_left
-	inc hl  ; get room 2 info
-	inc hl
-	set ROOM_INFO_DOOR_RIGHT_FLAG, (hl)
-	dec hl  ; restore room 2 ptr
-	dec hl
-	pop de  ; get room 1 ptr
-	push de
-	inc de  ; get room 1 info
-	inc de
-	ld a, (de)
-	set ROOM_INFO_DOOR_LEFT_FLAG, a
-	ld (de), a
-	jr @@room_2_doors
-@@check_x_neighboor_1_is_left:
-	add 1  ; check if diff = -1
-	jr nc, @@room_2_doors
+	cp e  ; are 1 and 2 on same column ?
+	jr z, @@doors_same_column
+	inc a
+	cp e  ; is 1 one column left of 2
+	jr nz, @@continue_room_2_doors
+
+	; case: 1 is one column left of 2
+	ld a, (hl)  ; reload room 2 coordinates
+	and ROOM_Y_MASK
+	ld e, a  ; e is room 2 y
+	ld a, d
+	and ROOM_Y_MASK  ; a is room 1 y
+	cp e  ; are 1 and 2 on same row ?
+	      ; if yes they are left/right neighboors
+	jr nz, @@continue_room_2_doors
 	inc hl  ; get room 2 info
 	inc hl
 	set ROOM_INFO_DOOR_LEFT_FLAG, (hl)
-	dec hl  ; restore room 2 ptr
+	dec hl
 	dec hl
 	pop de  ; get room 1 ptr
-	push de
+	push de  ; keep it on the stack
 	inc de  ; get room 1 info
 	inc de
 	ld a, (de)
 	set ROOM_INFO_DOOR_RIGHT_FLAG, a
 	ld (de), a
-	jr @@room_2_doors
-@@check_y_neighboor_1_is_top:
-	ld a, e
-	cp 1
-	jr nz, @@check_y_neighboor_1_is_bot
+	dec de
+	dec de
+	ld a, (de)  ; restore room 1 coordinates in d
+	ld d, a
+
+@@doors_same_column:
+	; case: 1 is on the same column as 2
+	ld a, (hl)  ; reload room 2 coordinates
+	and ROOM_Y_MASK
+	ld e, a  ; e is room 2 y
+	ld a, d
+	and ROOM_Y_MASK  ; a is room 1 y
+	inc a
+	cp e  ; is 1 one row above 2
+	      ; if yes they are top/down neighboors
+	jr nz, @@continue_room_2_doors
 	inc hl  ; get room 2 info
 	inc hl
-	set ROOM_INFO_DOOR_UP_FLAG, (hl)  
-	dec hl  ; restore room 2 ptr
+	set ROOM_INFO_DOOR_UP_FLAG, (hl)
+	dec hl
 	dec hl
 	pop de  ; get room 1 ptr
-	push de
+	push de  ; keep it on the stack
 	inc de  ; get room 1 info
 	inc de
 	ld a, (de)
 	set ROOM_INFO_DOOR_DOWN_FLAG, a
 	ld (de), a
-	jr @@room_2_doors
-@@check_y_neighboor_1_is_bot:
-	cp 2
+	dec de
+	dec de
+	ld a, (de)  ; restore room 1 coordinates in d
+	ld d, a
+
+@@continue_room_2_doors:
+	ld a, d  ; preserve d
+		 ; /!\ using a to store data
+	ld de, _sizeof_room  ; get next room 2
+	add hl, de
+	ld d, a
+	dec c
 	jr nz, @@room_2_doors
-	inc hl  ; get room 2 info
-	inc hl
-	set ROOM_INFO_DOOR_DOWN_FLAG, (hl)
-	dec hl  ; restore room 2 ptr
-	dec hl
-	pop de  ; get room 1 ptr
-	push de
-	inc de  ; get room 1 info
-	inc de
-	ld a, (de)
-	set ROOM_INFO_DOOR_UP_FLAG, a
-	ld (de), a
-	jr @@room_2_doors
-@@contine_room_1_doors:
+@@continue_room_1_doors:
 	pop hl  ; hl is room 1
-	pop de  ; d is room 1 counter
-	ld bc, _sizeof_room
-	add hl, bc
-	dec d
-	jp nz, @@room_1_doors
+	ld de, _sizeof_room
+	add hl, de
+	dec b
+	jr nz, @@room_1_doors
 ; \\\\ add doors ////
+
+; TODO: select adequate room number
+;	push hl  ; rng clobbers h
+;	call rng
+;	pop hl
+;	and %111
+;	inc a  ; room id between 1 and 8
+
 ; \\\ generate next floor ///
 
 ; /// load first room \\\
