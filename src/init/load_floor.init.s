@@ -196,6 +196,7 @@
 	ld (hl), a
 	dec hl
 	ld (hl), 0  ; room id 0 for boss room
+	            ; TODO: use the real boss room
 ; \\\\ other rooms generation ////
 
 ; //// add doors \\\\
@@ -308,40 +309,87 @@
 	jr nz, @@room_1_doors
 ; \\\\ add doors ////
 
-; TODO: select adequate room number
-;	push hl  ; rng clobbers h
-;	call rng
-;	pop hl
-;	and %111
-;	inc a  ; room id between 1 and 8
+; //// set room ids \\\\
+@set_room_ids:
+	ld hl, current_floor_.rooms
+	ld de, _sizeof_room
+	add hl, de  ; skip first room that always has id 0
+	ld a, (current_floor_.number_rooms)
+	ld b, a  ; b is the room counter
+	dec b  ; first room is skipped
+	dec b  ; stop 1 room earlier: don't touch boss room
 
+@@loop_rooms:
+	push bc  ; push room counter (in b)
+	inc hl
+	inc hl  ; hl is room info ptr
+	ld a, (hl)  ; a is room info
+	and ROOM_INFO_DOOR_MASK
+	ld c, a  ; c is room doors
+	push hl  ; push current room info ptr
+
+@@loop_candidates:
+	call rng  ; b and h are clobbered
+	and %111  ; TODO: this is a dirty way of selecting
+	          ; the right range
+	inc a
+	ld b, a  ; b is the new candidate id
+	; perform room_data_ptr_ptr=room_index+2*(candidate)
+	; room index is an array of ptr pointing to the
+	; rooms in ROM
+	ld e, a
+	ld l, a
+	xor a
+	ld d, a  ; de is candidate
+	ld h, a  ; hl is candidate
+	add hl, de  ; hl is candidate x2
+	ld de, room_index
+	add hl, de  ; hl is room_data_ptr_ptr
+	ld e, (hl)
+	inc hl
+	ld d, (hl)  ; de is candidate room data ptr
+	ld a, (de)  ; a is candidate info
+	and c  ; a is the doors that are in both
+	cp c  ; check the doors of current are all 
+	      ; present in candidate
+	jr nz, @@loop_candidates
+
+	; set the room id to the selected candidate
+	pop hl  ; pop current room info ptr
+	dec hl  ; hl is room id ptr
+	ld (hl), b
+	dec hl  ; hl is current room
+	ld de, _sizeof_room
+	add hl, de  ; hl is next room
+
+	; continue the loop
+	pop bc  ; pop room counter in b
+	dec b
+	jr nz, @@loop_rooms
+; \\\\ set room ids ////
 ; \\\ generate next floor ///
 
 ; /// load first room \\\
 @floorReady:
-; load first room
+	; set first map doors
 	ld a, (current_floor_.current_room)
 	ld h, a
 	ld a, (current_floor_.current_room + 1)
 	ld l, a
 	inc hl
 	inc hl
-	ldi a, (hl)
+	ld a, (hl)  ; a is current room info
 	ld (load_map_.doors), a
 
-	ld a, (current_floor_.current_room)
-	ld h, a
-	ld a, (current_floor_.current_room + 1)
-	ld l, a
-	inc hl
-	ld e, (hl)
+	dec hl
+	ld e, (hl)  ; e is current room id
 	xor a
-	ld d, a
+	ld d, a  ; de is current room id
 	ld h, d
-	ld l, e
-	add hl, de
+	ld l, e  ; hl is current room id
+	add hl, de  ; hl is current room id x2
 	ld de, room_index
-	add hl, de
+	add hl, de  ; hl is current room id index
 	ldi a, (hl)
 	ld (load_map_.map_address + 1), a
 	ldi a, (hl)
